@@ -1,4 +1,4 @@
-
+// server.js
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
@@ -13,34 +13,42 @@ app.use(express.json());
 
 const SECRET = "monetize_secret_key";
 
+// DB Setup
 const db = new sqlite3.Database("monetize.db");
 db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    password TEXT,
-    role TEXT
-  )`);
+  db.run(
+    `CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      password TEXT,
+      role TEXT
+    )`
+  );
 
-  db.run(`CREATE TABLE IF NOT EXISTS reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT,
-    publisher_id TEXT,
-    campaign_id TEXT,
-    searches INTEGER,
-    monetized_searches INTEGER,
-    clicks INTEGER,
-    coverage TEXT,
-    ctr TEXT,
-    rpc TEXT,
-    rpm TEXT,
-    revenue TEXT
-  )`);
+  db.run(
+    `CREATE TABLE IF NOT EXISTS reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT,
+      publisher_id TEXT,
+      campaign_id TEXT,
+      searches INTEGER,
+      monetized_searches INTEGER,
+      clicks INTEGER,
+      coverage TEXT,
+      ctr TEXT,
+      rpc TEXT,
+      rpm TEXT,
+      revenue TEXT
+    )`
+  );
 
-  db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`,
-    ["monetizepartner", "monetizepartner২৫@", "admin"]);
+  db.run(
+    `INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`,
+    ["monetizepartner", "monetizepartner২৫@", "admin"]
+  );
 });
 
+// Auth Middleware
 function authenticate(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).send("Access Denied");
@@ -53,17 +61,44 @@ function authenticate(req, res, next) {
   }
 }
 
-app.post("/api/login", (req, res) => {
+// Register new Publisher
+app.post("/api/register", (req, res) => {
   const { username, password } = req.body;
-  db.get(`SELECT * FROM users WHERE username = ? AND password = ?`, [username, password], (err, user) => {
-    if (err || !user) return res.status(401).send("Invalid credentials");
-    const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, SECRET);
-    res.json({ token, role: user.role });
-  });
+  if (!username || !password) return res.status(400).send("Missing credentials");
+
+  db.run(
+    `INSERT INTO users (username, password, role) VALUES (?, ?, ?)`,
+    [username, password, "publisher"],
+    function (err) {
+      if (err) {
+        if (err.message.includes("UNIQUE")) {
+          return res.status(409).send("Username already exists");
+        }
+        return res.status(500).send("Server error");
+      }
+      res.send("Registration successful");
+    }
+  );
 });
 
+// Login Endpoint
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+  db.get(
+    `SELECT * FROM users WHERE username = ? AND password = ?`,
+    [username, password],
+    (err, user) => {
+      if (err || !user) return res.status(401).send("Invalid credentials");
+      const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, SECRET);
+      res.json({ token, role: user.role });
+    }
+  );
+});
+
+// Multer Setup
 const upload = multer({ dest: "uploads/" });
 
+// Upload Excel File (Admin only)
 app.post("/api/upload", authenticate, upload.single("file"), (req, res) => {
   if (req.user.role !== "admin") return res.status(403).send("Forbidden");
   const workbook = XLSX.readFile(req.file.path);
@@ -94,6 +129,7 @@ app.post("/api/upload", authenticate, upload.single("file"), (req, res) => {
   res.send("File processed successfully");
 });
 
+// Get Reports (Publisher or Admin)
 app.get("/api/reports", authenticate, (req, res) => {
   const publisherId = req.query.publisher_id;
   const query = publisherId ? `SELECT * FROM reports WHERE publisher_id = ?` : `SELECT * FROM reports`;
